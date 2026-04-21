@@ -728,18 +728,122 @@
       countdownTimers[id] = setInterval(update, 1000);
     }
 
-    // Placeholder stubs for transaction functions — added in next commit
-    async function submitCreateCampaign() {}
-    function  openContributeModal(id)     {}
-    async function submitContribute()     {}
-    async function doWithdraw(id)         {}
-    async function doRefund(id)           {}
-    function  openModal(id)               {}
-    function  closeModal(id)              {}
-    function  showToast(msg, type)        { console.log(type, msg); }
-    function  fmtEth(wei) { try { return parseFloat(ethers.utils.formatEther(wei)).toFixed(4).replace(/\.?0+$/,'') || '0'; } catch { return '0'; } }
-    function  truncateAddress(addr)       { return addr ? addr.slice(0,6)+'...'+addr.slice(-4) : '—'; }
-    function  setSubmitLoading(id, b)     {}
+    // ── Create campaign ───────────────────────────────────────
+    async function submitCreateCampaign() {
+      const goalVal = parseFloat(document.getElementById('create-goal').value);
+      const daysVal = parseInt(document.getElementById('create-days').value);
+      if (!goalVal || goalVal <= 0) { showToast('Enter a valid goal amount', 'error'); return; }
+      if (!daysVal || daysVal < 1)  { showToast('Duration must be at least 1 day', 'error'); return; }
+      if (!contract) { showToast('Connect your wallet first', 'error'); return; }
+      setSubmitLoading('create-submit', true);
+      try {
+        const goalWei  = ethers.utils.parseEther(goalVal.toString());
+        const duration = daysVal * 24 * 60 * 60;
+        showToast('Confirm the transaction in MetaMask...', 'pending');
+        const tx = await contract.createCampaign(goalWei, duration);
+        showToast('Transaction submitted. Waiting for confirmation...', 'pending');
+        await tx.wait();
+        showToast('🎉 Campaign launched successfully!', 'success');
+        closeModal('create-modal');
+        document.getElementById('create-goal').value = '';
+        document.getElementById('create-days').value = '';
+        await loadCampaigns();
+      } catch (e) { showToast(e.reason || e.message?.split('(')[0] || 'Transaction failed', 'error'); }
+      setSubmitLoading('create-submit', false);
+    }
+
+    // ── Contribute ────────────────────────────────────────────
+    function openContributeModal(id) {
+      const c = campaigns.find(x => x.id === id);
+      if (!c) return;
+      contributeTarget = id;
+      const pct = c.goal.gt(0) ? Math.min(c.totalRaised.mul(100).div(c.goal).toNumber(), 100) : 0;
+      document.getElementById('contribute-info').innerHTML = `
+        <div class="info-row"><span class="info-label">Campaign</span><span class="info-val">#${id}</span></div>
+        <div class="info-row"><span class="info-label">Goal</span><span class="info-val">${fmtEth(c.goal)} ETH</span></div>
+        <div class="info-row"><span class="info-label">Raised</span><span class="info-val">${fmtEth(c.totalRaised)} ETH (${pct}%)</span></div>`;
+      openModal('contribute-modal');
+    }
+
+    async function submitContribute() {
+      const amountVal = parseFloat(document.getElementById('contrib-amount').value);
+      if (!amountVal || amountVal <= 0) { showToast('Enter a valid amount', 'error'); return; }
+      if (contributeTarget === null) { showToast('No campaign selected', 'error'); return; }
+      if (!contract) { showToast('Connect your wallet first', 'error'); return; }
+      setSubmitLoading('contrib-submit', true);
+      try {
+        const amountWei = ethers.utils.parseEther(amountVal.toString());
+        showToast('Confirm the transaction in MetaMask...', 'pending');
+        const tx = await contract.contribute(contributeTarget, { value: amountWei });
+        showToast('Transaction submitted. Waiting...', 'pending');
+        await tx.wait();
+        showToast(`✅ Contributed ${amountVal} ETH successfully!`, 'success');
+        closeModal('contribute-modal');
+        document.getElementById('contrib-amount').value = '';
+        await loadCampaigns();
+      } catch (e) { showToast(e.reason || e.message?.split('(')[0] || 'Transaction failed', 'error'); }
+      setSubmitLoading('contrib-submit', false);
+    }
+
+    // ── Withdraw ──────────────────────────────────────────────
+    async function doWithdraw(id) {
+      if (!contract) { showToast('Connect wallet first', 'error'); return; }
+      showToast('Confirm withdrawal in MetaMask...', 'pending');
+      try {
+        const tx = await contract.withdraw(id);
+        showToast('Withdrawing funds...', 'pending');
+        await tx.wait();
+        showToast('💸 Funds withdrawn successfully!', 'success');
+        await loadCampaigns();
+      } catch (e) { showToast(e.reason || e.message?.split('(')[0] || 'Withdrawal failed', 'error'); }
+    }
+
+    // ── Refund ────────────────────────────────────────────────
+    async function doRefund(id) {
+      if (!contract) { showToast('Connect wallet first', 'error'); return; }
+      showToast('Confirm refund in MetaMask...', 'pending');
+      try {
+        const tx = await contract.refund(id);
+        showToast('Processing refund...', 'pending');
+        await tx.wait();
+        showToast('🔁 Refund received successfully!', 'success');
+        await loadCampaigns();
+      } catch (e) { showToast(e.reason || e.message?.split('(')[0] || 'Refund failed', 'error'); }
+    }
+
+    // ── Modal helpers ─────────────────────────────────────────
+    function openModal(id)  { document.getElementById(id).classList.add('open');    document.body.style.overflow = 'hidden'; }
+    function closeModal(id) { document.getElementById(id).classList.remove('open'); document.body.style.overflow = ''; }
+    document.querySelectorAll('.modal-overlay').forEach(el => {
+      el.addEventListener('click', e => { if (e.target === el) closeModal(el.id); });
+    });
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') document.querySelectorAll('.modal-overlay.open').forEach(el => closeModal(el.id));
+    });
+
+    // ── Toast ─────────────────────────────────────────────────
+    function showToast(msg, type = 'success') {
+      const icons = { success: 'fa-circle-check', error: 'fa-circle-xmark', pending: 'fa-circle-notch fa-spin' };
+      const t = document.createElement('div');
+      t.className = `toast ${type}`;
+      t.innerHTML = `<i class="fas ${icons[type]} toast-icon"></i><span class="toast-msg">${msg}</span>`;
+      document.getElementById('toast-container').appendChild(t);
+      setTimeout(() => { t.style.animation = 'slideOut 0.3s ease forwards'; setTimeout(() => t.remove(), 300); },
+        type === 'pending' ? 8000 : 4000);
+    }
+
+    // ── Utilities ─────────────────────────────────────────────
+    function fmtEth(wei) { try { return parseFloat(ethers.utils.formatEther(wei)).toFixed(4).replace(/\.?0+$/,'') || '0'; } catch { return '0'; } }
+    function truncateAddress(addr) { return addr ? addr.slice(0,6)+'...'+addr.slice(-4) : '—'; }
+    function setSubmitLoading(btnId, loading) {
+      const btn = document.getElementById(btnId);
+      btn.disabled = loading;
+      if (loading) btn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i> &nbsp;Processing...';
+      else {
+        if (btnId === 'create-submit')  btn.innerHTML = '<i class="fas fa-rocket"></i> &nbsp;Launch Campaign';
+        if (btnId === 'contrib-submit') btn.innerHTML = '<i class="fas fa-coins"></i> &nbsp;Confirm Contribution';
+      }
+    }
   </script>
 </body>
 </html>
