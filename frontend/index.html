@@ -438,7 +438,7 @@
           <div class="network-dot"></div>
           Sepolia Testnet
         </div>
-        <button id="wallet-btn" onclick="connectWallet()">
+        <button id="wallet-btn">
           <i class="fab fa-ethereum"></i>
           <span id="wallet-label">Connect Wallet</span>
         </button>
@@ -468,7 +468,7 @@
         </div>
       </div>
 
-      <button id="create-btn" onclick="openModal('create-modal')">
+      <button id="create-btn">
         <i class="fas fa-plus"></i> Create Campaign
       </button>
     </section>
@@ -482,7 +482,7 @@
     <!-- Campaign section -->
     <div class="section-head">
       <h2>All Campaigns</h2>
-      <button class="refresh-btn" id="refresh-btn" onclick="loadCampaigns()">
+      <button class="refresh-btn" id="refresh-btn">
         <i class="fas fa-rotate-right"></i> Refresh
       </button>
     </div>
@@ -497,7 +497,7 @@
     <div class="modal">
       <div class="modal-head">
         <h2>🚀 Create Campaign</h2>
-        <button class="modal-close" onclick="closeModal('create-modal')"><i class="fas fa-xmark"></i></button>
+        <button class="modal-close" id="close-create-modal"><i class="fas fa-xmark"></i></button>
       </div>
       <div class="form-group">
         <label>Funding Goal</label>
@@ -515,7 +515,7 @@
         </div>
         <div class="input-hint">After this period, funds can be withdrawn or refunded</div>
       </div>
-      <button class="btn-submit" id="create-submit" onclick="submitCreateCampaign()">
+      <button class="btn-submit" id="create-submit">
         <i class="fas fa-rocket"></i> &nbsp;Launch Campaign
       </button>
     </div>
@@ -526,7 +526,7 @@
     <div class="modal">
       <div class="modal-head">
         <h2>💰 Contribute ETH</h2>
-        <button class="modal-close" onclick="closeModal('contribute-modal')"><i class="fas fa-xmark"></i></button>
+        <button class="modal-close" id="close-contribute-modal"><i class="fas fa-xmark"></i></button>
       </div>
       <div class="modal-campaign-info" id="contribute-info"></div>
       <div class="form-group">
@@ -537,7 +537,7 @@
         </div>
         <div class="input-hint">ETH will be locked in the smart contract until the deadline</div>
       </div>
-      <button class="btn-submit" id="contrib-submit" onclick="submitContribute()">
+      <button class="btn-submit" id="contrib-submit">
         <i class="fas fa-coins"></i> &nbsp;Confirm Contribution
       </button>
     </div>
@@ -575,6 +575,16 @@
     window.addEventListener('load', async () => {
       if (CONTRACT_ADDRESS === "PASTE_YOUR_CONTRACT_ADDRESS_HERE")
         document.getElementById('config-banner').style.display = 'flex';
+
+      // Wire all static buttons via JS (avoids MetaMask SES blocking inline onclick)
+      document.getElementById('wallet-btn').addEventListener('click', connectWallet);
+      document.getElementById('create-btn').addEventListener('click', () => openModal('create-modal'));
+      document.getElementById('refresh-btn').addEventListener('click', loadCampaigns);
+      document.getElementById('create-submit').addEventListener('click', submitCreateCampaign);
+      document.getElementById('contrib-submit').addEventListener('click', submitContribute);
+      document.getElementById('close-create-modal').addEventListener('click', () => closeModal('create-modal'));
+      document.getElementById('close-contribute-modal').addEventListener('click', () => closeModal('contribute-modal'));
+
       if (window.ethereum) {
         const accounts = await window.ethereum.request({ method: 'eth_accounts' });
         if (accounts.length) await setupProvider(accounts[0]);
@@ -668,11 +678,11 @@
 
       let actionBtn = '';
       if (isActive && !c.withdrawn)
-        actionBtn = `<button class="btn btn-contribute" onclick="openContributeModal(${c.id})"><i class="fas fa-coins"></i>Contribute</button>`;
+        actionBtn = `<button class="btn btn-contribute" data-action="contribute" data-id="${c.id}"><i class="fas fa-coins"></i>Contribute</button>`;
       else if (!isActive && goalReached && isCreator && !c.withdrawn)
-        actionBtn = `<button class="btn btn-withdraw" onclick="doWithdraw(${c.id})"><i class="fas fa-wallet"></i>Withdraw</button>`;
+        actionBtn = `<button class="btn btn-withdraw" data-action="withdraw" data-id="${c.id}"><i class="fas fa-wallet"></i>Withdraw</button>`;
       else if (!isActive && !goalReached && hasContrib)
-        actionBtn = `<button class="btn btn-refund" onclick="doRefund(${c.id})"><i class="fas fa-rotate-left"></i>Refund</button>`;
+        actionBtn = `<button class="btn btn-refund" data-action="refund" data-id="${c.id}"><i class="fas fa-rotate-left"></i>Refund</button>`;
       else if (c.withdrawn)
         actionBtn = `<button class="btn btn-disabled" disabled><i class="fas fa-check-circle"></i>Completed</button>`;
       else
@@ -754,8 +764,9 @@
 
     // ── Contribute ────────────────────────────────────────────
     function openContributeModal(id) {
-      const c = campaigns.find(x => x.id === id);
-      if (!c) return;
+      id = Number(id);
+      const c = campaigns.find(x => Number(x.id) === id);
+      if (!c) { showToast('Campaign not found. Try refreshing.', 'error'); return; }
       contributeTarget = id;
       const pct = c.goal.gt(0) ? Math.min(c.totalRaised.mul(100).div(c.goal).toNumber(), 100) : 0;
       document.getElementById('contribute-info').innerHTML = `
@@ -810,6 +821,17 @@
         await loadCampaigns();
       } catch (e) { showToast(e.reason || e.message?.split('(')[0] || 'Refund failed', 'error'); }
     }
+
+    // ── Event delegation for card buttons ─────────────────────
+    document.addEventListener('click', e => {
+      const btn = e.target.closest('[data-action]');
+      if (!btn) return;
+      const action = btn.dataset.action;
+      const id     = Number(btn.dataset.id);
+      if (action === 'contribute') openContributeModal(id);
+      if (action === 'withdraw')   doWithdraw(id);
+      if (action === 'refund')     doRefund(id);
+    });
 
     // ── Modal helpers ─────────────────────────────────────────
     function openModal(id)  { document.getElementById(id).classList.add('open');    document.body.style.overflow = 'hidden'; }
