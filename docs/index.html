@@ -571,6 +571,7 @@
     let campaigns        = [];
     let contributeTarget = null;
     let countdownTimers  = {};
+    let loadingCampaigns = false;
 
     // ── Init ──────────────────────────────────────────────────
     window.addEventListener('load', async () => {
@@ -628,6 +629,8 @@
 
     // ── Load & render campaigns ───────────────────────────────
     async function loadCampaigns() {
+      if (loadingCampaigns) return;
+      loadingCampaigns = true;
       if (!contract) {
         document.getElementById('campaigns-grid').innerHTML =
           '<div class="grid-loading"><div class="spinner"></div><span>Connect your wallet to view campaigns</span></div>';
@@ -650,6 +653,7 @@
         showToast('Error loading campaigns. Check your contract address.', 'error');
       }
       btn.classList.remove('spinning');
+      loadingCampaigns = false;
     }
 
     function renderCampaigns() {
