@@ -571,14 +571,164 @@
     let contributeTarget = null;
     let countdownTimers  = {};
 
-    // Placeholder stubs — filled in subsequent commits
-    async function connectWallet()        {}
-    async function setupProvider(account) {}
-    function  disconnectWallet()          {}
-    async function loadCampaigns()        {}
-    function  renderCampaigns()           {}
-    function  updateStats()               {}
-    function  startCountdown(id, dl)      {}
+    // ── Init ──────────────────────────────────────────────────
+    window.addEventListener('load', async () => {
+      if (CONTRACT_ADDRESS === "PASTE_YOUR_CONTRACT_ADDRESS_HERE")
+        document.getElementById('config-banner').style.display = 'flex';
+      if (window.ethereum) {
+        const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+        if (accounts.length) await setupProvider(accounts[0]);
+        window.ethereum.on('accountsChanged', (a) => a.length ? setupProvider(a[0]) : disconnectWallet());
+        window.ethereum.on('chainChanged', () => location.reload());
+      }
+    });
+
+    // ── Wallet connection ─────────────────────────────────────
+    async function connectWallet() {
+      if (!window.ethereum) { showToast('MetaMask not found. Please install it at metamask.io', 'error'); return; }
+      try {
+        const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+        await setupProvider(accounts[0]);
+      } catch (e) { showToast('Wallet connection cancelled.', 'error'); }
+    }
+
+    async function setupProvider(account) {
+      provider = new ethers.providers.Web3Provider(window.ethereum);
+      const net = await provider.getNetwork();
+      if (net.chainId !== SEPOLIA_CHAIN_ID) {
+        showToast('Please switch MetaMask to Sepolia testnet', 'error');
+        try { await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0xaa36a7' }] }); } catch(e) {}
+        return;
+      }
+      signer = provider.getSigner();
+      userAddress = account;
+      contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer);
+      const btn = document.getElementById('wallet-btn');
+      btn.classList.add('connected');
+      document.getElementById('wallet-label').textContent = truncateAddress(account);
+      await loadCampaigns();
+    }
+
+    function disconnectWallet() {
+      userAddress = null; signer = null; contract = null;
+      document.getElementById('wallet-btn').classList.remove('connected');
+      document.getElementById('wallet-label').textContent = 'Connect Wallet';
+    }
+
+    // ── Load & render campaigns ───────────────────────────────
+    async function loadCampaigns() {
+      if (!contract) {
+        document.getElementById('campaigns-grid').innerHTML =
+          '<div class="grid-loading"><div class="spinner"></div><span>Connect your wallet to view campaigns</span></div>';
+        return;
+      }
+      const btn = document.getElementById('refresh-btn');
+      btn.classList.add('spinning');
+      try {
+        const count = (await contract.campaignCount()).toNumber();
+        campaigns = [];
+        for (let i = 0; i < count; i++) {
+          const [creator, goal, deadline, totalRaised, withdrawn] = await contract.getCampaign(i);
+          const myContrib = await contract.getContribution(i, userAddress);
+          campaigns.push({ id: i, creator, goal, deadline: deadline.toNumber(), totalRaised, withdrawn, myContrib });
+        }
+        renderCampaigns();
+        updateStats();
+      } catch (e) {
+        console.error(e);
+        showToast('Error loading campaigns. Check your contract address.', 'error');
+      }
+      btn.classList.remove('spinning');
+    }
+
+    function renderCampaigns() {
+      const grid = document.getElementById('campaigns-grid');
+      Object.values(countdownTimers).forEach(clearInterval);
+      countdownTimers = {};
+      if (campaigns.length === 0) {
+        grid.innerHTML = `<div class="empty-state"><div class="empty-icon">🎯</div><h3>No campaigns yet</h3><p>Be the first to launch a crowdfunding campaign on the blockchain.</p></div>`;
+        return;
+      }
+      grid.innerHTML = campaigns.map(buildCard).join('');
+      campaigns.forEach(c => { if (Date.now() / 1000 < c.deadline) startCountdown(c.id, c.deadline); });
+    }
+
+    function buildCard(c) {
+      const now = Math.floor(Date.now() / 1000);
+      const isActive = now < c.deadline;
+      const goalReached = c.totalRaised.gte(c.goal);
+      const pct = c.goal.gt(0) ? Math.min(c.totalRaised.mul(100).div(c.goal).toNumber(), 100) : 0;
+      const isCreator = userAddress && c.creator.toLowerCase() === userAddress.toLowerCase();
+      const hasContrib = c.myContrib.gt(0);
+
+      let statusHtml, fillClass;
+      if (isActive)       { statusHtml = `<span class="badge badge-active"><span class="badge-dot"></span>Active</span>`;    fillClass = 'active'; }
+      else if (goalReached){ statusHtml = `<span class="badge badge-success"><span class="badge-dot"></span>Succeeded</span>`; fillClass = 'success'; }
+      else                 { statusHtml = `<span class="badge badge-failed"><span class="badge-dot"></span>Failed</span>`;    fillClass = 'failed'; }
+
+      let actionBtn = '';
+      if (isActive && !c.withdrawn)
+        actionBtn = `<button class="btn btn-contribute" onclick="openContributeModal(${c.id})"><i class="fas fa-coins"></i>Contribute</button>`;
+      else if (!isActive && goalReached && isCreator && !c.withdrawn)
+        actionBtn = `<button class="btn btn-withdraw" onclick="doWithdraw(${c.id})"><i class="fas fa-wallet"></i>Withdraw</button>`;
+      else if (!isActive && !goalReached && hasContrib)
+        actionBtn = `<button class="btn btn-refund" onclick="doRefund(${c.id})"><i class="fas fa-rotate-left"></i>Refund</button>`;
+      else if (c.withdrawn)
+        actionBtn = `<button class="btn btn-disabled" disabled><i class="fas fa-check-circle"></i>Completed</button>`;
+      else
+        actionBtn = `<button class="btn btn-disabled" disabled><i class="fas fa-clock"></i>Waiting</button>`;
+
+      const myContribHtml = hasContrib
+        ? `<div class="my-contrib"><i class="fas fa-user"></i> Your contribution: ${fmtEth(c.myContrib)} ETH</div>` : '';
+
+      return `
+        <div class="campaign-card">
+          <div class="card-top"><span class="campaign-id">Campaign #${c.id}</span>${statusHtml}</div>
+          <div class="creator-row">
+            <div class="creator-avatar"><i class="fas fa-user"></i></div>
+            ${truncateAddress(c.creator)}
+            ${isCreator ? '<span class="you-tag">YOU</span>' : ''}
+          </div>
+          <div class="amounts-row">
+            <div class="amount-box"><div class="label">Raised</div><div class="val raised">${fmtEth(c.totalRaised)} ETH</div></div>
+            <div class="amount-box" style="text-align:right"><div class="label">Goal</div><div class="val">${fmtEth(c.goal)} ETH</div></div>
+          </div>
+          <div class="progress-wrap">
+            <div class="progress-track"><div class="progress-fill ${fillClass}" style="width:${pct}%"></div></div>
+            <div class="progress-meta">
+              <span class="pct ${pct===100?'done':''}">${pct}% funded</span>
+              <span style="color:var(--text3);font-size:0.72rem">${fmtEth(c.goal.sub(c.totalRaised).lt(0)?ethers.BigNumber.from(0):c.goal.sub(c.totalRaised))} ETH left</span>
+            </div>
+          </div>
+          <div class="countdown-row"><i class="fas fa-clock"></i><span id="cd-${c.id}" class="countdown-val">${isActive?'...':'Ended'}</span></div>
+          ${myContribHtml}
+          <div class="card-actions">${actionBtn}</div>
+        </div>`;
+    }
+
+    function updateStats() {
+      const now = Math.floor(Date.now() / 1000);
+      let totalRaised = ethers.BigNumber.from(0), active = 0;
+      campaigns.forEach(c => { totalRaised = totalRaised.add(c.totalRaised); if (now < c.deadline) active++; });
+      document.getElementById('stat-campaigns').textContent = campaigns.length;
+      document.getElementById('stat-raised').textContent    = fmtEth(totalRaised) + ' ETH';
+      document.getElementById('stat-active').textContent    = active;
+    }
+
+    function startCountdown(id, deadline) {
+      function update() {
+        const el = document.getElementById(`cd-${id}`);
+        if (!el) { clearInterval(countdownTimers[id]); return; }
+        const diff = deadline - Math.floor(Date.now() / 1000);
+        if (diff <= 0) { el.textContent = 'Ended'; clearInterval(countdownTimers[id]); loadCampaigns(); return; }
+        const d = Math.floor(diff / 86400), h = Math.floor((diff%86400)/3600), m = Math.floor((diff%3600)/60), s = diff%60;
+        el.textContent = d > 0 ? `${d}d ${h}h ${m}m remaining` : `${h}h ${m}m ${s}s remaining`;
+      }
+      update();
+      countdownTimers[id] = setInterval(update, 1000);
+    }
+
+    // Placeholder stubs for transaction functions — added in next commit
     async function submitCreateCampaign() {}
     function  openContributeModal(id)     {}
     async function submitContribute()     {}
@@ -586,15 +736,10 @@
     async function doRefund(id)           {}
     function  openModal(id)               {}
     function  closeModal(id)              {}
-    function  showToast(msg, type)        {}
-    function  fmtEth(wei)                 { return '0'; }
+    function  showToast(msg, type)        { console.log(type, msg); }
+    function  fmtEth(wei) { try { return parseFloat(ethers.utils.formatEther(wei)).toFixed(4).replace(/\.?0+$/,'') || '0'; } catch { return '0'; } }
     function  truncateAddress(addr)       { return addr ? addr.slice(0,6)+'...'+addr.slice(-4) : '—'; }
     function  setSubmitLoading(id, b)     {}
-
-    window.addEventListener('load', () => {
-      if (CONTRACT_ADDRESS === "PASTE_YOUR_CONTRACT_ADDRESS_HERE")
-        document.getElementById('config-banner').style.display = 'flex';
-    });
   </script>
 </body>
 </html>
