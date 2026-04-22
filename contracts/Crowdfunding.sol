@@ -47,6 +47,8 @@ contract Crowdfunding {
         uint256 deadline;
         uint256 totalRaised;
         bool    withdrawn;
+        string  title;
+        string  description;
     }
 
     // =========================================================
@@ -86,7 +88,8 @@ contract Crowdfunding {
         uint256 indexed campaignId,
         address indexed creator,
         uint256 goal,
-        uint256 deadline
+        uint256 deadline,
+        string  title
     );
 
     event ContributionMade(
@@ -130,23 +133,26 @@ contract Crowdfunding {
      * After a successful call the new campaign is stored at:
      *   campaigns[campaignCount - 1]
      */
-    function createCampaign(uint256 _goal, uint256 _duration) external {
-        require(_goal > 0,     "Goal must be greater than zero");
-        require(_duration > 0, "Duration must be greater than zero");
+    function createCampaign(uint256 _goal, uint256 _duration, string calldata _title, string calldata _description) external {
+        require(_goal > 0,                 "Goal must be greater than zero");
+        require(_duration >= 600,          "Duration must be at least 10 minutes");
+        require(bytes(_title).length > 0,  "Title cannot be empty");
 
-        uint256 campaignId = campaignCount; // save current ID before incrementing
+        uint256 campaignId = campaignCount;
 
         campaigns[campaignId] = Campaign({
             creator:     payable(msg.sender),
             goal:        _goal,
             deadline:    block.timestamp + _duration,
             totalRaised: 0,
-            withdrawn:   false
+            withdrawn:   false,
+            title:       _title,
+            description: _description
         });
 
         campaignCount++;
 
-        emit CampaignCreated(campaignId, msg.sender, _goal, block.timestamp + _duration);
+        emit CampaignCreated(campaignId, msg.sender, _goal, block.timestamp + _duration, _title);
     }
 
     /**
@@ -296,11 +302,13 @@ contract Crowdfunding {
             uint256 goal,
             uint256 deadline,
             uint256 totalRaised,
-            bool    withdrawn
+            bool    withdrawn,
+            string memory title,
+            string memory description
         )
     {
         Campaign storage c = campaigns[_campaignId];
-        return (c.creator, c.goal, c.deadline, c.totalRaised, c.withdrawn);
+        return (c.creator, c.goal, c.deadline, c.totalRaised, c.withdrawn, c.title, c.description);
     }
 
     /**

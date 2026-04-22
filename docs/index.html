@@ -334,6 +334,16 @@
     }
     .input-wrap input:focus { border-color: var(--orange); box-shadow: 0 0 0 3px rgba(255,107,0,0.1); }
     .input-wrap input::placeholder { color: var(--text3); }
+    .input-wrap textarea {
+      width: 100%; background: var(--bg2); border: 1px solid var(--border);
+      border-radius: 10px; padding: 12px 16px; color: var(--text);
+      font-size: 0.95rem; font-family: inherit; resize: vertical; box-sizing: border-box;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .input-wrap textarea:focus { outline: none; border-color: var(--orange); box-shadow: 0 0 0 3px rgba(255,107,0,0.1); }
+    .input-wrap textarea::placeholder { color: var(--text3); }
+    .campaign-title { font-size: 1.05rem; font-weight: 800; margin-bottom: 4px; color: var(--text); }
+    .campaign-desc  { font-size: 0.82rem; color: var(--text3); margin-bottom: 14px; line-height: 1.5; }
     .input-suffix {
       position: absolute; right: 14px; top: 50%; transform: translateY(-50%);
       font-size: 0.82rem; font-weight: 700; color: var(--text3);
@@ -501,6 +511,20 @@
         <button class="modal-close" id="close-create-modal"><i class="fas fa-xmark"></i></button>
       </div>
       <div class="form-group">
+        <label>Campaign Title</label>
+        <div class="input-wrap">
+          <input type="text" id="create-title" placeholder="My Awesome Project" />
+        </div>
+        <div class="input-hint">Give your campaign a clear, catchy name</div>
+      </div>
+      <div class="form-group">
+        <label>Description</label>
+        <div class="input-wrap">
+          <textarea id="create-description" placeholder="Describe your campaign and what the funds will be used for..." rows="3"></textarea>
+        </div>
+        <div class="input-hint">Optional — help contributors understand your project</div>
+      </div>
+      <div class="form-group">
         <label>Funding Goal</label>
         <div class="input-wrap">
           <input type="number" id="create-goal" placeholder="0.05" step="0.001" min="0.001" />
@@ -511,10 +535,10 @@
       <div class="form-group">
         <label>Campaign Duration</label>
         <div class="input-wrap">
-          <input type="number" id="create-days" placeholder="7" step="1" min="1" />
-          <span class="input-suffix">Days</span>
+          <input type="number" id="create-minutes" placeholder="10" step="1" min="10" />
+          <span class="input-suffix">Mins</span>
         </div>
-        <div class="input-hint">After this period, funds can be withdrawn or refunded</div>
+        <div class="input-hint">Minimum 10 minutes — after this period, funds can be withdrawn or refunded</div>
       </div>
       <button class="btn-submit" id="create-submit">
         <i class="fas fa-rocket"></i> &nbsp;Launch Campaign
@@ -554,13 +578,13 @@
 
     const ABI = [
       "function campaignCount() view returns (uint256)",
-      "function createCampaign(uint256 _goal, uint256 _duration) external",
+      "function createCampaign(uint256 _goal, uint256 _duration, string _title, string _description) external",
       "function contribute(uint256 _campaignId) external payable",
       "function withdraw(uint256 _campaignId) external",
       "function refund(uint256 _campaignId) external",
-      "function getCampaign(uint256 _campaignId) view returns (address creator, uint256 goal, uint256 deadline, uint256 totalRaised, bool withdrawn)",
+      "function getCampaign(uint256 _campaignId) view returns (address creator, uint256 goal, uint256 deadline, uint256 totalRaised, bool withdrawn, string title, string description)",
       "function getContribution(uint256 _campaignId, address _contributor) view returns (uint256)",
-      "event CampaignCreated(uint256 indexed campaignId, address indexed creator, uint256 goal, uint256 deadline)",
+      "event CampaignCreated(uint256 indexed campaignId, address indexed creator, uint256 goal, uint256 deadline, string title)",
       "event ContributionMade(uint256 indexed campaignId, address indexed contributor, uint256 amount)",
       "event WithdrawalMade(uint256 indexed campaignId, address indexed creator, uint256 amount)",
       "event RefundIssued(uint256 indexed campaignId, address indexed contributor, uint256 amount)"
@@ -642,9 +666,9 @@
         const count = (await contract.campaignCount()).toNumber();
         campaigns = [];
         for (let i = 0; i < count; i++) {
-          const [creator, goal, deadline, totalRaised, withdrawn] = await contract.getCampaign(i);
+          const [creator, goal, deadline, totalRaised, withdrawn, title, description] = await contract.getCampaign(i);
           const myContrib = await contract.getContribution(i, userAddress);
-          campaigns.push({ id: i, creator, goal, deadline: deadline.toNumber(), totalRaised, withdrawn, myContrib });
+          campaigns.push({ id: i, creator, goal, deadline: deadline.toNumber(), totalRaised, withdrawn, title, description, myContrib });
         }
         renderCampaigns();
         updateStats();
@@ -699,6 +723,8 @@
       return `
         <div class="campaign-card">
           <div class="card-top"><span class="campaign-id">Campaign #${c.id}</span>${statusHtml}</div>
+          ${c.title ? `<div class="campaign-title">${c.title}</div>` : ''}
+          ${c.description ? `<div class="campaign-desc">${c.description}</div>` : ''}
           <div class="creator-row">
             <div class="creator-avatar"><i class="fas fa-user"></i></div>
             ${truncateAddress(c.creator)}
@@ -745,23 +771,28 @@
 
     // ── Create campaign ───────────────────────────────────────
     async function submitCreateCampaign() {
-      const goalVal = parseFloat(document.getElementById('create-goal').value);
-      const daysVal = parseInt(document.getElementById('create-days').value);
+      const titleVal = document.getElementById('create-title').value.trim();
+      const descVal  = document.getElementById('create-description').value.trim();
+      const goalVal  = parseFloat(document.getElementById('create-goal').value);
+      const minsVal  = parseInt(document.getElementById('create-minutes').value);
+      if (!titleVal)              { showToast('Campaign title is required', 'error'); return; }
       if (!goalVal || goalVal <= 0) { showToast('Enter a valid goal amount', 'error'); return; }
-      if (!daysVal || daysVal < 1)  { showToast('Duration must be at least 1 day', 'error'); return; }
+      if (!minsVal || minsVal < 10) { showToast('Duration must be at least 10 minutes', 'error'); return; }
       if (!contract) { showToast('Connect your wallet first', 'error'); return; }
       setSubmitLoading('create-submit', true);
       try {
         const goalWei  = ethers.utils.parseEther(goalVal.toString());
-        const duration = daysVal * 24 * 60 * 60;
+        const duration = minsVal * 60;
         showToast('Confirm the transaction in MetaMask...', 'pending');
-        const tx = await contract.createCampaign(goalWei, duration);
+        const tx = await contract.createCampaign(goalWei, duration, titleVal, descVal);
         showToast('Transaction submitted. Waiting for confirmation...', 'pending');
         await tx.wait();
         showToast('🎉 Campaign launched successfully!', 'success');
         closeModal('create-modal');
-        document.getElementById('create-goal').value = '';
-        document.getElementById('create-days').value = '';
+        document.getElementById('create-title').value       = '';
+        document.getElementById('create-description').value = '';
+        document.getElementById('create-goal').value        = '';
+        document.getElementById('create-minutes').value     = '';
         await loadCampaigns();
       } catch (e) { showToast(e.reason || e.message?.split('(')[0] || 'Transaction failed', 'error'); }
       setSubmitLoading('create-submit', false);
