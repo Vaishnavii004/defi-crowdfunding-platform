@@ -334,6 +334,16 @@
     }
     .input-wrap input:focus { border-color: var(--orange); box-shadow: 0 0 0 3px rgba(255,107,0,0.1); }
     .input-wrap input::placeholder { color: var(--text3); }
+    .duration-wrap { display: flex; gap: 8px; }
+    .duration-wrap input { flex: 1; }
+    .duration-unit {
+      background: rgba(255,255,255,0.05); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); padding: 13px 12px; color: var(--text);
+      font-size: 0.95rem; font-family: inherit; outline: none; cursor: pointer;
+      transition: border-color 0.2s; min-width: 100px;
+    }
+    .duration-unit:focus { border-color: var(--orange); box-shadow: 0 0 0 3px rgba(255,107,0,0.1); }
+    .duration-unit option { background: #1a1a2e; }
     .input-wrap textarea {
       width: 100%; background: var(--bg2); border: 1px solid var(--border);
       border-radius: 10px; padding: 12px 16px; color: var(--text);
@@ -534,9 +544,13 @@
       </div>
       <div class="form-group">
         <label>Campaign Duration</label>
-        <div class="input-wrap">
-          <input type="number" id="create-minutes" placeholder="10" step="1" min="10" />
-          <span class="input-suffix">Mins</span>
+        <div class="duration-wrap">
+          <input type="number" id="create-duration" placeholder="10" step="1" min="1" />
+          <select id="create-unit" class="duration-unit">
+            <option value="minutes">Minutes</option>
+            <option value="hours">Hours</option>
+            <option value="days">Days</option>
+          </select>
         </div>
         <div class="input-hint">Minimum 10 minutes — after this period, funds can be withdrawn or refunded</div>
       </div>
@@ -771,18 +785,21 @@
 
     // ── Create campaign ───────────────────────────────────────
     async function submitCreateCampaign() {
-      const titleVal = document.getElementById('create-title').value.trim();
-      const descVal  = document.getElementById('create-description').value.trim();
-      const goalVal  = parseFloat(document.getElementById('create-goal').value);
-      const minsVal  = parseInt(document.getElementById('create-minutes').value);
-      if (!titleVal)              { showToast('Campaign title is required', 'error'); return; }
+      const titleVal    = document.getElementById('create-title').value.trim();
+      const descVal     = document.getElementById('create-description').value.trim();
+      const goalVal     = parseFloat(document.getElementById('create-goal').value);
+      const durationVal = parseInt(document.getElementById('create-duration').value);
+      const unit        = document.getElementById('create-unit').value;
+      const multiplier  = unit === 'days' ? 86400 : unit === 'hours' ? 3600 : 60;
+      const durationSec = durationVal * multiplier;
+      if (!titleVal)                { showToast('Campaign title is required', 'error'); return; }
       if (!goalVal || goalVal <= 0) { showToast('Enter a valid goal amount', 'error'); return; }
-      if (!minsVal || minsVal < 10) { showToast('Duration must be at least 10 minutes', 'error'); return; }
+      if (!durationVal || durationSec < 600) { showToast('Duration must be at least 10 minutes', 'error'); return; }
       if (!contract) { showToast('Connect your wallet first', 'error'); return; }
       setSubmitLoading('create-submit', true);
       try {
         const goalWei  = ethers.utils.parseEther(goalVal.toString());
-        const duration = minsVal * 60;
+        const duration = durationSec;
         showToast('Confirm the transaction in MetaMask...', 'pending');
         const tx = await contract.createCampaign(goalWei, duration, titleVal, descVal);
         showToast('Transaction submitted. Waiting for confirmation...', 'pending');
@@ -792,7 +809,8 @@
         document.getElementById('create-title').value       = '';
         document.getElementById('create-description').value = '';
         document.getElementById('create-goal').value        = '';
-        document.getElementById('create-minutes').value     = '';
+        document.getElementById('create-duration').value    = '';
+        document.getElementById('create-unit').value        = 'minutes';
         await loadCampaigns();
       } catch (e) { showToast(e.reason || e.message?.split('(')[0] || 'Transaction failed', 'error'); }
       setSubmitLoading('create-submit', false);
