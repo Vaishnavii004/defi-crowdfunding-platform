@@ -334,16 +334,17 @@
     }
     .input-wrap input:focus { border-color: var(--orange); box-shadow: 0 0 0 3px rgba(255,107,0,0.1); }
     .input-wrap input::placeholder { color: var(--text3); }
-    .duration-wrap { display: flex; gap: 8px; }
-    .duration-wrap input { flex: 1; }
+    .duration-wrap { display: flex; gap: 10px; align-items: stretch; }
+    .duration-wrap input { flex: 1; min-width: 0; padding-right: 16px; }
     .duration-unit {
+      flex-shrink: 0; width: 110px;
       background: rgba(255,255,255,0.05); border: 1px solid var(--border);
-      border-radius: var(--radius-sm); padding: 13px 12px; color: var(--text);
+      border-radius: var(--radius-sm); padding: 13px 10px; color: var(--text);
       font-size: 0.95rem; font-family: inherit; outline: none; cursor: pointer;
-      transition: border-color 0.2s; min-width: 100px;
+      transition: border-color 0.2s; appearance: auto; -webkit-appearance: auto;
     }
     .duration-unit:focus { border-color: var(--orange); box-shadow: 0 0 0 3px rgba(255,107,0,0.1); }
-    .duration-unit option { background: #1a1a2e; }
+    .duration-unit option { background: #1a1a2e; color: var(--text); }
     .input-wrap textarea {
       width: 100%; background: var(--bg2); border: 1px solid var(--border);
       border-radius: 10px; padding: 12px 16px; color: var(--text);
